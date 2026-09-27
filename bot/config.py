@@ -18,6 +18,8 @@ DEFAULT_USER_AGENT = (
 
 # Telegram hard limits (see https://core.telegram.org/bots/api).
 TELEGRAM_MAX_VIDEO_BYTES = 50 * 1024 * 1024
+# Bot API accepts URL-based video uploads up to 20 MB; larger files need upload.
+TELEGRAM_MAX_URL_VIDEO_BYTES = 20 * 1024 * 1024
 TELEGRAM_MAX_PHOTO_BYTES = 10 * 1024 * 1024
 TELEGRAM_MAX_CAPTION_CHARS = 1024
 TELEGRAM_MAX_MEDIA_GROUP = 10

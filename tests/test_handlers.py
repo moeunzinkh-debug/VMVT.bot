@@ -70,6 +70,8 @@ def fake_download(tmp_path: Path, content: bytes = b"video-bytes") -> Downloaded
 async def test_happy_path_uploads_video_and_caches_file_id(
     settings, tmp_path, video_result
 ) -> None:
+    # Unknown size skips the fast path and exercises local download/upload.
+    video_result.size = None
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(return_value=fake_download(tmp_path))
@@ -87,6 +89,20 @@ async def test_happy_path_uploads_video_and_caches_file_id(
     assert "@khmer.drama" in kwargs["caption"]
     assert cache.get(video_result.video_id).file_id == "TELEGRAM_FILE_ID"
     status.delete.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_small_video_uses_fast_telegram_url_delivery(settings, video_result) -> None:
+    service = MagicMock()
+    service.resolve = AsyncMock(return_value=video_result)
+    service.download = AsyncMock(side_effect=AssertionError("fast path should avoid download"))
+
+    update, message, _ = make_update("https://vm.tiktok.com/ZMhvzrfeR/")
+    await handle_message(update, make_context(settings, service))
+
+    message.reply_video.assert_awaited_once()
+    assert message.reply_video.await_args.kwargs["video"] == video_result.best_video
+    service.download.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -148,24 +164,27 @@ async def test_resolve_failure_shows_helpful_error(settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_oversized_video_falls_back_to_direct_link(settings, video_result) -> None:
+async def test_oversized_video_reports_limit_without_external_link(settings, video_result) -> None:
+    video_result.size = 90_000_000
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(side_effect=MediaTooLargeError("too big", 90_000_000))
+    service.download_with_ytdlp = AsyncMock(side_effect=DownloadError("too big"))
 
     update, message, status = make_update("https://vm.tiktok.com/ZMhvzrfeR/")
     context = make_context(settings, service)
 
-    # Telegram refuses both the file upload and the URL, so we share a direct link.
+    # Telegram refuses both uploads; the bot reports the limit instead of
+    # sending an external download link.
     message.reply_video = AsyncMock(side_effect=TelegramError("file too large"))
 
     await handle_message(update, context)
 
     message.reply_video.assert_awaited_once()
     assert message.reply_video.await_args.kwargs["video"] == video_result.best_video
-    fallback = message.reply_text.await_args.kwargs
-    assert "reply_markup" in fallback
-    assert "ទាញយក" in str(fallback["reply_markup"].inline_keyboard[0][0].text)
+    final_reply = message.reply_text.await_args
+    assert "reply_markup" not in final_reply.kwargs
+    assert "ធំពេក" in final_reply.args[0]
     status.delete.assert_awaited()
 
 
@@ -200,9 +219,11 @@ async def test_slideshow_is_sent_as_media_group(settings, tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_download_failure_reports_error(settings, video_result) -> None:
+    video_result.size = None
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(side_effect=DownloadError("network down"))
+    service.download_with_ytdlp = AsyncMock(side_effect=DownloadError("extractor down"))
     message_sent = MagicMock()
     message_sent.video.file_id = "X"
 
@@ -213,6 +234,28 @@ async def test_download_failure_reports_error(settings, video_result) -> None:
 
     # falls back to sending the URL directly
     assert message.reply_video.await_args.kwargs["video"] == video_result.best_video
+
+
+@pytest.mark.asyncio
+async def test_ytdlp_fallback_uploads_video_into_chat(settings, tmp_path, video_result) -> None:
+    video_result.size = None
+    service = MagicMock()
+    service.resolve = AsyncMock(return_value=video_result)
+    service.download = AsyncMock(side_effect=DownloadError("expired CDN URL"))
+    local_video = fake_download(tmp_path, b"recovered-video")
+    service.download_with_ytdlp = AsyncMock(return_value=local_video)
+
+    update, message, _ = make_update("https://vm.tiktok.com/ZMhvzrfeR/")
+    await handle_message(update, make_context(settings, service))
+
+    service.download_with_ytdlp.assert_awaited_once_with(
+        video_result.source_url, max_bytes=settings.max_upload_bytes
+    )
+    message.reply_video.assert_awaited_once()
+    assert message.reply_video.await_args.kwargs["filename"].endswith(".mp4")
+    assert not local_video.path.exists()
+    # No message containing an external download button is sent.
+    assert all("reply_markup" not in call.kwargs for call in message.reply_text.await_args_list[1:])
 
 
 def test_keyboard_and_filename(video_result) -> None:
