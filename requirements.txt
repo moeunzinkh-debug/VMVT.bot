@@ -1,0 +1,9 @@
+# Telegram framework (async, PTB v21/v22)
+python-telegram-bot>=21.9,<23
+
+# Used for the health/status HTTP server and for streaming downloads
+aiohttp>=3.9,<4
+
+# Optional but recommended: fallback provider when the TikWM API is rate limited.
+# The bot imports yt-dlp lazily and keeps working without it.
+yt-dlp>=2024.8.6
