@@ -1,0 +1,29 @@
+# Render Blueprint — deploy with "New → Blueprint" and point it at this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: vmvt-bot
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python -m bot
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: MODE
+        value: polling
+      - key: LOG_LEVEL
+        value: INFO
+      - key: MAX_UPLOAD_MB
+        value: "48"
+      - key: RATE_LIMIT_PER_MIN
+        value: "8"
+      # Create the bot with @BotFather and paste the token here (or in the dashboard).
+      - key: BOT_TOKEN
+        sync: false
+      # Optional: comma separated Telegram user ids allowed to use /stats.
+      - key: ADMIN_IDS
+        sync: false
