@@ -17,7 +17,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from .. import texts
-from ..config import TELEGRAM_MAX_PHOTO_BYTES, Settings
+from ..config import TELEGRAM_MAX_PHOTO_BYTES, TELEGRAM_MAX_URL_VIDEO_BYTES, Settings
 from ..constants import MEDIA_CACHE_KEY, RATE_LIMITER_KEY, SERVICE_KEY, SETTINGS_KEY
 from ..services import (
     DownloadError,
@@ -138,6 +138,29 @@ async def _send_video(
     caption = build_caption(result, quality="🎞 HD" if result.hd else None)
     keyboard = _keyboard(result)
     too_large = False
+
+    # Fast path: let Telegram fetch small, public CDN videos itself. This avoids
+    # downloading the whole file to Render and uploading it again, so delivery
+    # is much quicker. Fall back to local download for expired/blocked URLs.
+    if result.size is not None and result.size <= TELEGRAM_MAX_URL_VIDEO_BYTES:
+        try:
+            await _edit(status, texts.STATUS_UPLOADING)
+            sent = await message.reply_video(
+                video=candidates[0],
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                supports_streaming=True,
+                duration=result.duration,
+                width=result.width,
+                height=result.height,
+                write_timeout=300,
+            )
+            return (sent.video.file_id, False)
+        except TelegramError as exc:
+            logger.info(
+                "Telegram URL fetch failed for %s; trying local upload: %s", candidates[0], exc
+            )
 
     for candidate in candidates:
         try:

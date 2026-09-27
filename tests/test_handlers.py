@@ -70,6 +70,8 @@ def fake_download(tmp_path: Path, content: bytes = b"video-bytes") -> Downloaded
 async def test_happy_path_uploads_video_and_caches_file_id(
     settings, tmp_path, video_result
 ) -> None:
+    # Unknown size skips the fast path and exercises local download/upload.
+    video_result.size = None
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(return_value=fake_download(tmp_path))
@@ -87,6 +89,20 @@ async def test_happy_path_uploads_video_and_caches_file_id(
     assert "@khmer.drama" in kwargs["caption"]
     assert cache.get(video_result.video_id).file_id == "TELEGRAM_FILE_ID"
     status.delete.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_small_video_uses_fast_telegram_url_delivery(settings, video_result) -> None:
+    service = MagicMock()
+    service.resolve = AsyncMock(return_value=video_result)
+    service.download = AsyncMock(side_effect=AssertionError("fast path should avoid download"))
+
+    update, message, _ = make_update("https://vm.tiktok.com/ZMhvzrfeR/")
+    await handle_message(update, make_context(settings, service))
+
+    message.reply_video.assert_awaited_once()
+    assert message.reply_video.await_args.kwargs["video"] == video_result.best_video
+    service.download.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -149,6 +165,7 @@ async def test_resolve_failure_shows_helpful_error(settings) -> None:
 
 @pytest.mark.asyncio
 async def test_oversized_video_reports_limit_without_external_link(settings, video_result) -> None:
+    video_result.size = 90_000_000
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(side_effect=MediaTooLargeError("too big", 90_000_000))
@@ -202,6 +219,7 @@ async def test_slideshow_is_sent_as_media_group(settings, tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_download_failure_reports_error(settings, video_result) -> None:
+    video_result.size = None
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(side_effect=DownloadError("network down"))
@@ -220,6 +238,7 @@ async def test_download_failure_reports_error(settings, video_result) -> None:
 
 @pytest.mark.asyncio
 async def test_ytdlp_fallback_uploads_video_into_chat(settings, tmp_path, video_result) -> None:
+    video_result.size = None
     service = MagicMock()
     service.resolve = AsyncMock(return_value=video_result)
     service.download = AsyncMock(side_effect=DownloadError("expired CDN URL"))
