@@ -175,6 +175,43 @@ async def _send_video(
         finally:
             downloaded.cleanup()
 
+    # CDN requests can fail when TikTok requires extractor-specific headers or
+    # when the resolved media URL has expired. Retry from the original TikTok
+    # post with yt-dlp so the bot can upload a local file into this chat.
+    if result.source_url:
+        try:
+            await _edit(status, texts.STATUS_DOWNLOADING)
+            downloaded = await service.download_with_ytdlp(
+                result.source_url, max_bytes=settings.max_upload_bytes
+            )
+        except MediaTooLargeError as exc:
+            logger.info("yt-dlp media too large (%s bytes): %s", exc.size, result.source_url)
+            too_large = True
+        except DownloadError as exc:
+            logger.info("yt-dlp fallback failed for %s: %s", result.source_url, exc)
+        else:
+            try:
+                await _edit(status, texts.STATUS_UPLOADING)
+                with downloaded.path.open("rb") as handle:
+                    sent = await message.reply_video(
+                        video=handle,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
+                        supports_streaming=True,
+                        duration=result.duration,
+                        width=result.width,
+                        height=result.height,
+                        filename=_filename(result),
+                        write_timeout=600,
+                        read_timeout=120,
+                    )
+                return (sent.video.file_id, False)
+            except TelegramError as exc:
+                logger.warning("yt-dlp upload failed for %s: %s", result.source_url, exc)
+            finally:
+                downloaded.cleanup()
+
     return await _send_by_url(message, result, caption, keyboard, status, too_large)
 
 
@@ -186,7 +223,7 @@ async def _send_by_url(
     status: Any,
     too_large: bool,
 ) -> tuple[str | None, bool]:
-    """Last resort: let Telegram fetch the file, or share the direct link."""
+    """Last resort: let Telegram fetch the video directly into this chat."""
     best = result.best_video
     if not best:
         await _edit(status, texts.ERR_EMPTY_MEDIA)
@@ -209,12 +246,11 @@ async def _send_by_url(
     except TelegramError as exc:
         logger.warning("Direct URL upload failed for %s: %s", best, exc)
 
+    # Do not send an external download button: the requested behavior is to
+    # deliver the actual media in this chat. Report the reason instead.
     await message.reply_text(
-        texts.FALLBACK_LINK_TEXT,
+        texts.ERR_TOO_LARGE if too_large else texts.ERR_DELIVERY_FAILED,
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton(texts.DOWNLOAD_BUTTON, url=best)]]
-        ),
     )
     return (None, too_large)
 

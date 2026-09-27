@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -176,6 +177,87 @@ class TikTokService:
                 return DownloadedFile(path=path, size=written, content_type=content_type, url=url)
         except (TimeoutError, ClientError, OSError) as exc:
             raise DownloadError(f"Network error: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    async def download_with_ytdlp(
+        self,
+        url: str,
+        *,
+        max_bytes: int,
+    ) -> DownloadedFile:
+        """Download a TikTok post with yt-dlp when its CDN URL is unavailable.
+
+        TikTok's CDN links can require request headers or expire quickly. yt-dlp
+        follows the original post URL and handles those details before returning
+        a local file that the bot can upload directly into the chat.
+        """
+        self.settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        prefix = f"vmvt-ytdlp-{time.time_ns()}"
+        output_template = str(self.settings.temp_dir / f"{prefix}.%(ext)s")
+
+        def _download() -> Path:
+            try:
+                import yt_dlp
+            except ImportError as exc:  # pragma: no cover - declared dependency
+                raise DownloadError("yt-dlp is not installed") from exc
+
+            options = {
+                "quiet": True,
+                "no_warnings": True,
+                "noprogress": True,
+                "noplaylist": True,
+                "format": "best[ext=mp4]/best",
+                "merge_output_format": "mp4",
+                "max_filesize": max_bytes,
+                "socket_timeout": min(60, self.settings.download_timeout_s),
+                "retries": 2,
+                "http_headers": {"User-Agent": self.settings.user_agent},
+                "outtmpl": output_template,
+            }
+            with yt_dlp.YoutubeDL(options) as ydl:
+                ydl.download([url])
+
+            files = [
+                path
+                for path in self.settings.temp_dir.glob(f"{prefix}.*")
+                if path.is_file() and not path.name.endswith((".part", ".ytdl"))
+            ]
+            if not files:
+                raise DownloadError("yt-dlp did not produce a video file")
+            return max(files, key=lambda path: path.stat().st_size)
+
+        keep_path: Path | None = None
+        try:
+            path = await asyncio.wait_for(
+                asyncio.to_thread(_download), timeout=self.settings.download_timeout_s
+            )
+            size = path.stat().st_size
+            if size > max_bytes:
+                raise MediaTooLargeError("Media exceeds upload limit", size)
+            if size == 0:
+                raise DownloadError("Downloaded video is empty")
+            content_type = "video/mp4" if path.suffix.lower() == ".mp4" else "video/octet-stream"
+            keep_path = path
+            return DownloadedFile(path=path, size=size, content_type=content_type, url=url)
+        except MediaTooLargeError:
+            raise
+        except DownloadError:
+            raise
+        except TimeoutError as exc:
+            raise DownloadError("yt-dlp download timed out") from exc
+        except Exception as exc:
+            message = str(exc).strip() or exc.__class__.__name__
+            if "file is larger than" in message.lower() or "max_filesize" in message.lower():
+                raise MediaTooLargeError(message, max_bytes + 1) from exc
+            raise DownloadError(f"yt-dlp download failed: {message[:200]}") from exc
+        finally:
+            # Keep only the returned file; discard yt-dlp sidecars and partials.
+            for extra in self.settings.temp_dir.glob(f"{prefix}.*"):
+                if extra != keep_path:
+                    try:
+                        extra.unlink(missing_ok=True)
+                    except OSError:
+                        logger.debug("Could not remove yt-dlp temporary file %s", extra)
 
     # ------------------------------------------------------------------
     def stats(self) -> dict[str, Any]:

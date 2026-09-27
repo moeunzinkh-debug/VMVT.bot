@@ -208,7 +208,7 @@ Bot ឆ្លើយតបជាមួយវីដេអូគ្មាន Waterm
    - **yt-dlp** → ជ្រើស format គ្មាន watermark ដែលមានគុណភាពខ្ពស់បំផុត
 4. **ទាញយក** — stream ទៅឯកសារបណ្ដោះអាសន្នដោយកំណត់ទំហំ (`MAX_UPLOAD_MB`) ។
 5. **ផ្ញើ** — upload ទៅ Telegram, រក្សាទុក `file_id` ក្នុង cache ។
-6. **Fallback** — បើធំពេក ឬ upload បរាជ័យ → ផ្ញើតាម URL → រួចផ្ញើតំណទាញយកផ្ទាល់។
+6. **Fallback** — បើ URL CDN ផុតកំណត់ ឬទាញយកមិនបាន → yt-dlp ទាញយកពីតំណដើម រួច bot upload វីដេអូចូលក្នុងឆាត។ បើវីដេអូធំពេក ឬបរាជ័យទាំងអស់ នឹងប្រាប់កំហុសជំនួសការផ្ញើតំណក្រៅ។
 
 ---
 
@@ -235,7 +235,7 @@ health/webhook HTTP server និង config parsing។
 | `Conflict: terminated by other getUpdates` | មាន ២ instance កំពុងដំណើរការ — បិទមួយ ឬប្តូរ `MODE=webhook` |
 | Bot មិនឆ្លើយតប (Render Free) | Service បាន "ដេក" — បន្ថែម cron job ទៅ `/healthz` |
 | `រកមិនឃើញវីដេអូនេះទេ` | វីដេអូឯកជន/ត្រូវបានលុប ឬតំណមិនត្រឹមត្រូវ |
-| `វីដេអូធំពេក` | Telegram អនុញ្ញាត ៥០ MB — Bot នឹងផ្ញើតំណទាញយកជំនួស |
+| `វីដេអូធំពេក` | ទំហំលើសកំណត់ upload របស់ Telegram — bot មិនផ្ញើតំណក្រៅទេ; សូមសាកល្បងវីដេអូតូចជាងនេះ |
 | TikWM rate limit | Bot ប្តូរទៅ yt-dlp ដោយស្វ័យប្រវត្តិ; ឬដំឡើង `yt-dlp` |
 | Port binding failed | កំណត់ `PORT` ឱ្យត្រូវនឹង platform (Render កំណត់ដោយខ្លួនឯង) |
 
